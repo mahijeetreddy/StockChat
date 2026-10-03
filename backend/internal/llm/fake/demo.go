@@ -270,6 +270,10 @@ func textResponse(s string) Response {
 }
 
 func actOn(p plan) Response {
+	if p.intent == intentCompare && len(p.symbols) >= 2 {
+		syms := p.symbols[:min(5, len(p.symbols))]
+		return withCalls(toolCall("compare_symbols", map[string]any{"symbols": syms, "range": p.rng}))
+	}
 	var tcs []ToolCall
 	for _, s := range p.symbols {
 		switch p.intent {
@@ -369,7 +373,7 @@ func summarize(calls []llm.ContentBlock, results []llm.ContentBlock) string {
 		case "get_company_profile":
 			parts = append(parts, fmt.Sprintf("**%v** (%v) is in the %v industry and trades on %v.", m["name"], m["symbol"], m["industry"], m["exchange"]))
 		case "compare_symbols":
-			parts = append(parts, "Here's the comparison. The chart shows each stock's % change from the start of the period.")
+			parts = append(parts, summarizeCompare(m))
 		case "list_alerts":
 			n := 0
 			if a, ok := m["alerts"].([]any); ok {
@@ -387,6 +391,28 @@ func summarize(calls []llm.ContentBlock, results []llm.ContentBlock) string {
 		}
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+func summarizeCompare(m map[string]any) string {
+	rows, _ := m["results"].([]any)
+	var best, worst map[string]any
+	for _, r := range rows {
+		row, _ := r.(map[string]any)
+		if best == nil || num(row["change_percent"]) > num(best["change_percent"]) {
+			best = row
+		}
+		if worst == nil || num(row["change_percent"]) < num(worst["change_percent"]) {
+			worst = row
+		}
+	}
+	if best == nil {
+		return "I couldn't load the comparison data."
+	}
+	s := fmt.Sprintf("Over %v, **%v** did best (%+.2f%%)", m["range"], best["symbol"], num(best["change_percent"]))
+	if worst != nil && worst["symbol"] != best["symbol"] {
+		s += fmt.Sprintf(" and **%v** did worst (%+.2f%%)", worst["symbol"], num(worst["change_percent"]))
+	}
+	return s + ". The chart shows each stock's % change from the start of the period."
 }
 
 func num(v any) float64 {

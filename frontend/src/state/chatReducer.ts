@@ -68,7 +68,8 @@ function applyEvent(state: ChatState, ev: ChatEvent): ChatState {
       return updateLastAssistant(state, (m) => {
         const parts = m.parts.slice();
         const last = parts[parts.length - 1];
-        if (last?.kind === 'text') parts[parts.length - 1] = { ...last, text: last.text + ev.data.text };
+        if (last?.kind === 'text')
+          parts[parts.length - 1] = { ...last, text: last.text + ev.data.text };
         else parts.push({ kind: 'text', text: ev.data.text });
         return { ...m, parts };
       });
@@ -117,7 +118,11 @@ function applyEvent(state: ChatState, ev: ChatEvent): ChatState {
       };
     case 'done':
       return {
-        ...updateLastAssistant(state, (m) => ({ ...m, status: 'done', parts: settlePending(m.parts) })),
+        ...updateLastAssistant(state, (m) => ({
+          ...m,
+          status: 'done',
+          parts: settlePending(m.parts),
+        })),
         streaming: false,
       };
   }
@@ -132,7 +137,9 @@ function insertAfterTool(parts: Part[], callId: string, part: Part): Part[] {
 /** Mark tool chips that never got a result as failed once the turn ends. */
 function settlePending(parts: Part[]): Part[] {
   return parts.map((p) =>
-    p.kind === 'tool' && p.status === 'pending' ? { ...p, status: 'error', error: 'Interrupted' } : p,
+    p.kind === 'tool' && p.status === 'pending'
+      ? { ...p, status: 'error', error: 'Interrupted' }
+      : p,
   );
 }
 
@@ -225,7 +232,13 @@ export function fromStored(stored: StoredMessage[]): ChatMessage[] {
       continue;
     }
     if (!current) {
-      current = { id: `m${m.id}`, role: 'assistant', parts: [], status: 'done', prompt: lastPrompt };
+      current = {
+        id: `m${m.id}`,
+        role: 'assistant',
+        parts: [],
+        status: 'done',
+        prompt: lastPrompt,
+      };
       out.push(current);
     }
     if (m.role === 'assistant') {

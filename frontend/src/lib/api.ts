@@ -5,7 +5,9 @@ import type {
   ChatEvent,
   Conversation,
   ConversationDetail,
+  HistoryRange,
   MarketStatus,
+  PriceChartData,
   WatchlistResponse,
 } from './types';
 
@@ -15,6 +17,7 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly body?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -45,17 +48,22 @@ function headers(extra?: HeadersInit): Headers {
   return h;
 }
 
+/** Fired when the server rejects the bearer token (APP_TOKEN is set). */
+export const AUTH_REQUIRED_EVENT = 'stockchat:auth-required';
+
 async function errorFrom(res: Response): Promise<ApiError> {
+  if (res.status === 401) window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
   let msg = `Request failed (${res.status})`;
+  let body: unknown;
   try {
-    const body: unknown = await res.json();
+    body = await res.json();
     if (body && typeof body === 'object' && 'error' in body && typeof body.error === 'string') {
       msg = body.error;
     }
   } catch {
     // non-JSON error body
   }
-  return new ApiError(res.status, msg);
+  return new ApiError(res.status, msg, body);
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -122,11 +130,15 @@ export const api = {
   getConversation: (id: string) =>
     request<ConversationDetail>(`/api/conversations/${encodeURIComponent(id)}`),
   deleteConversation: (id: string) =>
-    request<void>(`/api/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    request<undefined>(`/api/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   marketStatus: () => request<MarketStatus>('/api/market/status'),
+  history: (symbol: string, range: HistoryRange) =>
+    request<PriceChartData>(
+      `/api/history/${encodeURIComponent(symbol)}?range=${encodeURIComponent(range)}`,
+    ),
   watchlist: () => request<WatchlistResponse>('/api/watchlist'),
   alerts: () => request<{ alerts: Alert[] }>('/api/alerts').then((r) => r.alerts),
-  deleteAlert: (id: number) => request<void>(`/api/alerts/${id}`, { method: 'DELETE' }),
+  deleteAlert: (id: number) => request<undefined>(`/api/alerts/${id}`, { method: 'DELETE' }),
   confirmAction: (id: string) =>
     request<ActionResult>(`/api/actions/${encodeURIComponent(id)}/confirm`, { method: 'POST' }),
   cancelAction: (id: string) =>

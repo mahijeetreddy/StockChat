@@ -71,13 +71,16 @@ export async function readSSE(
   onMessage: (msg: SSEMessage) => void,
 ): Promise<void> {
   const parser = new SSEParser(onMessage);
-  const reader = body.pipeThrough(new TextDecoderStream()).getReader();
+  const decoder = new TextDecoder();
+  const reader = body.getReader();
   try {
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
-      parser.feed(value);
+      // stream: true keeps multi-byte characters split across chunks intact.
+      parser.feed(decoder.decode(value, { stream: true }));
     }
+    parser.feed(decoder.decode());
     parser.end();
   } finally {
     reader.releaseLock();

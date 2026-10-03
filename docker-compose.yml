@@ -1,0 +1,35 @@
+# Runs the full stack. With no .env it starts in offline demo mode
+# (LLM_PROVIDER=fake, MARKET_PROVIDER=mock): no API keys needed.
+#   docker compose up --build      ->  http://localhost:8080
+# For live data, set keys in .env (see README) and LLM_PROVIDER/MARKET_PROVIDER.
+
+services:
+  api:
+    build: ./backend
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      BIND_ADDR: 0.0.0.0
+      PORT: "8080"
+      DB_PATH: /data/stockchat.db
+      APP_ENV: ${APP_ENV:-dev}
+      LLM_PROVIDER: ${LLM_PROVIDER:-fake}
+      MARKET_PROVIDER: ${MARKET_PROVIDER:-mock}
+      HISTORY_PROVIDER: ${HISTORY_PROVIDER:-}
+      MOCK_MARKET: ${MOCK_MARKET:-auto}
+    volumes:
+      - stockchat-data:/data
+    restart: unless-stopped
+
+  web:
+    build: ./frontend
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  stockchat-data:

@@ -1,10 +1,35 @@
-export default function App() {
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useState } from 'react';
+import { NotificationBell, Toasts } from './components/layout/Notifications';
+import { SidebarPanels } from './components/layout/SidebarPanels';
+import { TokenGate } from './components/layout/TokenGate';
+import { ChatPage } from './pages/ChatPage';
+import { useNotifications } from './state/useNotifications';
+
+function Shell() {
+  const { items, toasts, unread, dismiss, markRead } = useNotifications();
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-50 text-slate-900">
-      <div className="text-center">
-        <h1 className="text-3xl font-semibold">StockChat</h1>
-        <p className="mt-2 text-slate-600">Chat UI coming soon.</p>
-      </div>
-    </main>
+    <>
+      <ChatPage
+        SidebarPanels={SidebarPanels}
+        headerActions={<NotificationBell items={items} unread={unread} onOpen={markRead} />}
+      />
+      <Toasts toasts={toasts} onDismiss={dismiss} />
+      <TokenGate />
+    </>
+  );
+}
+
+export default function App() {
+  const [client] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 5_000 } },
+      }),
+  );
+  return (
+    <QueryClientProvider client={client}>
+      <Shell />
+    </QueryClientProvider>
   );
 }

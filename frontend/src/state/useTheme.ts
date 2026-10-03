@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 
 type Theme = 'light' | 'dark';
 const KEY = 'stockchat.theme';
@@ -28,4 +28,19 @@ export function useTheme() {
 
   const toggle = useCallback(() => setTheme((t) => (t === 'dark' ? 'light' : 'dark')), []);
   return { theme, toggle };
+}
+
+function subscribeDark(cb: () => void): () => void {
+  const obs = new MutationObserver(cb);
+  obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+  return () => obs.disconnect();
+}
+
+/** Tracks whether dark mode is active (the "dark" class on <html>). */
+export function useIsDark(): boolean {
+  return useSyncExternalStore(
+    subscribeDark,
+    () => document.documentElement.classList.contains('dark'),
+    () => false,
+  );
 }

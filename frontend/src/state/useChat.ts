@@ -22,7 +22,9 @@ export function useChat() {
   const abortRef = useRef<AbortController | null>(null);
   const convoRef = useRef<string | null>(null);
   const queryClient = useQueryClient();
-  convoRef.current = state.conversationId;
+  useEffect(() => {
+    convoRef.current = state.conversationId;
+  }, [state.conversationId]);
 
   const load = useCallback(async (id: string) => {
     abortRef.current?.abort();
@@ -74,7 +76,8 @@ export function useChat() {
             dispatch({ type: 'event', event });
           },
         });
-        if (!finished) dispatch({ type: 'failed', message: 'The connection closed before the reply finished.' });
+        if (!finished)
+          dispatch({ type: 'failed', message: 'The connection closed before the reply finished.' });
       } catch (err) {
         if (controller.signal.aborted) {
           dispatch({ type: 'stopped' });

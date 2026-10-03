@@ -135,7 +135,10 @@ export type ChatEvent =
     }
   | { event: 'confirmation_required'; data: ConfirmData }
   | { event: 'error'; data: { message: string; retryable: boolean } }
-  | { event: 'done'; data: { message_id: string; usage: { input_tokens: number; output_tokens: number } } };
+  | {
+      event: 'done';
+      data: { message_id: string; usage: { input_tokens: number; output_tokens: number } };
+    };
 
 // ---- REST payloads ----
 

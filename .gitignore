@@ -1,8 +1,9 @@
-# Secrets
+# Secrets and local-only files (kept out of the GitHub repo by request)
 .env
 .env.*
-!.env.example
+PLAN.md
 .env.example
+PLAN.md
 
 # Data
 data/

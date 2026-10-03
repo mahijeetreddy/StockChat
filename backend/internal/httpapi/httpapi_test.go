@@ -41,14 +41,29 @@ func newHarness(t *testing.T, client llm.Client, opts Options) *harness {
 	t.Cleanup(func() { _ = st.Close() })
 	mkt := mock.New(mock.WithClock(func() time.Time { return friday }))
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	now := func() time.Time { return friday }
+	st.SetClock(now) // agent, store, and server share one clock
+	registry := tools.NewRegistry(
+		&tools.GetQuote{Market: mkt, Now: now},
+		&tools.SearchSymbol{Market: mkt},
+		&tools.GetHistory{Market: mkt},
+		&tools.ListWatchlist{Store: st, Market: mkt, Now: now},
+		&tools.WatchlistChange{Store: st, Market: mkt},
+		&tools.WatchlistChange{Store: st, Market: mkt, Remove: true},
+		&tools.ListAlerts{Store: st},
+		&tools.CreateAlert{Store: st, Market: mkt},
+		&tools.DeleteAlertTool{Store: st},
+	)
 	ag := &agent.Agent{
 		LLM:     client,
-		Tools:   tools.NewRegistry(&tools.GetQuote{Market: mkt, Now: func() time.Time { return friday }}, &tools.SearchSymbol{Market: mkt}),
+		Tools:   registry,
 		History: st,
 		Actions: st,
 		Logger:  logger,
+		Now:     now,
 	}
-	api := New(st, ag, mkt, logger, opts)
+	api := New(Deps{Store: st, Agent: ag, Market: mkt, Tools: registry, Logger: logger}, opts)
+	api.now = now
 	srv := httptest.NewServer(api.Handler())
 	t.Cleanup(srv.Close)
 	return &harness{srv: srv, store: st, llm: client, api: api}
@@ -345,4 +360,26 @@ func TestMarketStatus(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	assert.Equal(t, true, body["open"], "mock clock is Friday 11:00 ET")
+}
+
+func TestHistoryEndpoint(t *testing.T) {
+	h := newHarness(t, fake.New(), Options{})
+	var chart map[string]any
+	resp, err := http.Get(h.srv.URL + "/api/history/msft?range=3m")
+	require.NoError(t, err)
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&chart))
+	resp.Body.Close()
+	assert.Equal(t, "MSFT", chart["symbol"])
+	assert.Equal(t, "3M", chart["range"])
+	assert.Len(t, chart["candles"], 63)
+
+	for path, code := range map[string]int{
+		"/api/history/MSFT?range=2W": http.StatusBadRequest,
+		"/api/history/ZZZZ?range=1M": http.StatusNotFound,
+	} {
+		resp, err := http.Get(h.srv.URL + path)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, code, resp.StatusCode, path)
+	}
 }

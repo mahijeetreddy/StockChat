@@ -32,7 +32,12 @@ describe('chatReducer', () => {
       },
       {
         event: 'tool_result',
-        data: { call_id: 'a', name: 'get_quote', ok: true, ui: { type: 'quote_card', data: quote } },
+        data: {
+          call_id: 'a',
+          name: 'get_quote',
+          ok: true,
+          ui: { type: 'quote_card', data: quote },
+        },
       },
       { event: 'text_delta', data: { text: 'AAPL is $230.' } },
       { event: 'done', data: { message_id: '4', usage: { input_tokens: 1, output_tokens: 1 } } },
@@ -54,7 +59,10 @@ describe('chatReducer', () => {
     const s = run([
       { event: 'tool_start', data: { call_id: 'a', name: 'get_history', label: 'A' } },
       { event: 'tool_start', data: { call_id: 'b', name: 'get_history', label: 'B' } },
-      { event: 'tool_result', data: { call_id: 'b', name: 'get_history', ok: false, error: 'nope' } },
+      {
+        event: 'tool_result',
+        data: { call_id: 'b', name: 'get_history', ok: false, error: 'nope' },
+      },
       { event: 'tool_result', data: { call_id: 'a', name: 'get_history', ok: true } },
     ]);
     const parts = s.messages[1]!.parts;

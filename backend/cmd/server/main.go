@@ -4,10 +4,12 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -18,6 +20,10 @@ import (
 )
 
 func main() {
+	// "server healthcheck" probes /healthz; used by Docker (distroless has no curl).
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(healthcheck())
+	}
 	if err := run(); err != nil {
 		slog.Error("server exited", "err", err)
 		os.Exit(1)
@@ -74,6 +80,23 @@ func run() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
+}
+
+func healthcheck() int {
+	port := 8080
+	if p, err := strconv.Atoi(os.Getenv("PORT")); err == nil && p > 0 && p <= 65535 {
+		port = p
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/healthz", port)) // #nosec G704 -- loopback probe; port is a validated integer
+	if err != nil {
+		return 1
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
 }
 
 func newLogger(cfg config.Config) *slog.Logger {

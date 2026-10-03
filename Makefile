@@ -1,10 +1,13 @@
 # StockChat developer commands. Requires: go, node/npm, golangci-lint (for lint), docker (for up).
+# The backend reads ../.env automatically (via godotenv).
 SHELL := /bin/bash
 BACKEND := backend
 FRONTEND := frontend
 RACE ?= -race
 
-.PHONY: dev dev-api dev-web test test-backend test-frontend lint lint-backend lint-frontend \
+DEMO_ENV := LLM_PROVIDER=fake MARKET_PROVIDER=mock HISTORY_PROVIDER=
+
+.PHONY: demo dev dev-api dev-web test test-backend test-frontend lint lint-backend lint-frontend \
         eval build build-backend build-frontend up down install
 
 install:
@@ -14,6 +17,10 @@ install:
 ## dev: run backend and frontend dev servers together
 dev:
 	$(MAKE) -j2 dev-api dev-web
+
+## demo: like dev, but forced into offline mode (no keys)
+demo:
+	$(DEMO_ENV) $(MAKE) -j2 dev-api dev-web
 
 dev-api:
 	cd $(BACKEND) && go run ./cmd/server

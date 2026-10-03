@@ -1,4 +1,4 @@
-import { forwardRef, useState, type KeyboardEvent } from 'react';
+import { forwardRef, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { IconSend, IconStop } from '../icons';
 
 const MAX_CHARS = 2000;
@@ -14,6 +14,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, Props>(function Composer
   ref,
 ) {
   const [text, setText] = useState('');
+  const innerRef = useRef<HTMLTextAreaElement | null>(null);
   const trimmed = text.trim();
   const tooLong = text.length > MAX_CHARS;
 
@@ -22,6 +23,14 @@ export const Composer = forwardRef<HTMLTextAreaElement, Props>(function Composer
     onSend(trimmed);
     setText('');
   };
+
+  // Grow the textarea with its content (up to max-h-48).
+  useLayoutEffect(() => {
+    const el = innerRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [text]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -43,13 +52,17 @@ export const Composer = forwardRef<HTMLTextAreaElement, Props>(function Composer
       </label>
       <textarea
         id="composer"
-        ref={ref}
+        ref={(el) => {
+          innerRef.current = el;
+          if (typeof ref === 'function') ref(el);
+          else if (ref) ref.current = el;
+        }}
         rows={1}
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={onKeyDown}
-        placeholder={streaming ? 'Waiting for the reply…' : 'Ask about a US stock, e.g. "How has NVDA done this month?"'}
-        className="field-sizing-content max-h-48 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-[15px] outline-none placeholder:text-slate-400 dark:placeholder:text-slate-500"
+        placeholder={streaming ? 'Waiting for the reply…' : 'Ask about a US stock…'}
+        className="max-h-48 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-[15px] outline-none placeholder:text-slate-400 dark:placeholder:text-slate-500"
         aria-describedby="composer-hint"
         aria-invalid={tooLong}
       />

@@ -15,8 +15,11 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/mahijeetreddy/stockchat/backend/internal/agent"
+	"github.com/mahijeetreddy/stockchat/backend/internal/alerts"
+	"github.com/mahijeetreddy/stockchat/backend/internal/llm"
 	"github.com/mahijeetreddy/stockchat/backend/internal/market"
 	"github.com/mahijeetreddy/stockchat/backend/internal/store"
+	"github.com/mahijeetreddy/stockchat/backend/internal/tools"
 )
 
 // Runner runs one chat turn (implemented by *agent.Agent).
@@ -35,23 +38,36 @@ type Options struct {
 	DefaultLocation   *time.Location
 }
 
+// Deps are the server's collaborators.
+type Deps struct {
+	Store  *store.Store
+	Agent  Runner
+	Market market.Provider
+	Tools  *tools.Registry // executes confirmed actions
+	Hub    *alerts.Hub     // alert notifications for SSE subscribers (may be nil)
+	Logger *slog.Logger
+}
+
 // Server holds handler dependencies.
 type Server struct {
 	store  *store.Store
 	agent  Runner
 	market market.Provider
+	tools  *tools.Registry
+	hub    *alerts.Hub
 	log    *slog.Logger
 	opts   Options
 	now    func() time.Time
 
 	busyMu sync.Mutex
-	busy   map[string]bool // conversations with a reply in progress
+	busy   map[string]bool     // conversations with a reply in progress
+	notes  map[string][]string // system notes queued until the reply finishes
 
-	extra []func(chi.Router) // routes registered by later milestones
+	extra []func(chi.Router) // extra routes (e.g. dev-only endpoints)
 }
 
 // New builds a Server.
-func New(st *store.Store, runner Runner, mkt market.Provider, logger *slog.Logger, opts Options) *Server {
+func New(d Deps, opts Options) *Server {
 	if opts.MaxBodyBytes <= 0 {
 		opts.MaxBodyBytes = 32 << 10
 	}
@@ -67,7 +83,10 @@ func New(st *store.Store, runner Runner, mkt market.Provider, logger *slog.Logge
 	if opts.DefaultLocation == nil {
 		opts.DefaultLocation = market.NewYork
 	}
-	return &Server{store: st, agent: runner, market: mkt, log: logger, opts: opts, now: time.Now, busy: map[string]bool{}}
+	return &Server{
+		store: d.Store, agent: d.Agent, market: d.Market, tools: d.Tools, hub: d.Hub, log: d.Logger,
+		opts: opts, now: time.Now, busy: map[string]bool{}, notes: map[string][]string{},
+	}
 }
 
 // Handler returns the HTTP handler with all routes and middleware.
@@ -90,6 +109,13 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/conversations/{id}", s.handleGetConversation)
 		r.Delete("/conversations/{id}", s.handleDeleteConversation)
 		r.Get("/market/status", s.handleMarketStatus)
+		r.Get("/watchlist", s.handleWatchlist)
+		r.Get("/alerts", s.handleListAlerts)
+		r.Delete("/alerts/{id}", s.handleDeleteAlert)
+		r.Post("/actions/{id}/confirm", s.handleConfirmAction)
+		r.Post("/actions/{id}/cancel", s.handleCancelAction)
+		r.Get("/stream/notifications", s.handleNotifications)
+		r.Get("/history/{symbol}", s.handleHistory)
 		for _, f := range s.extra {
 			f(r)
 		}
@@ -97,7 +123,7 @@ func (s *Server) Handler() http.Handler {
 	return r
 }
 
-// Mount registers extra /api routes (used by later features).
+// Mount registers extra /api routes.
 func (s *Server) Mount(f func(chi.Router)) { s.extra = append(s.extra, f) }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -135,10 +161,36 @@ func (s *Server) tryLock(id string) bool {
 	return true
 }
 
+// unlock releases a conversation and appends any system notes that arrived
+// while the reply was streaming, so they never split a tool call from its result.
 func (s *Server) unlock(id string) {
 	s.busyMu.Lock()
+	defer s.busyMu.Unlock()
 	delete(s.busy, id)
-	s.busyMu.Unlock()
+	for _, n := range s.notes[id] {
+		s.appendNote(id, n)
+	}
+	delete(s.notes, id)
+}
+
+// addNote appends a system note now, or queues it if a reply is in progress.
+func (s *Server) addNote(convoID, note string) {
+	s.busyMu.Lock()
+	defer s.busyMu.Unlock()
+	if s.busy[convoID] {
+		s.notes[convoID] = append(s.notes[convoID], note)
+		return
+	}
+	s.appendNote(convoID, note)
+}
+
+// appendNote must be called with busyMu held.
+func (s *Server) appendNote(convoID, note string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := s.store.AppendMessage(ctx, convoID, llm.TextMessage(llm.RoleUser, note), nil); err != nil {
+		s.log.Warn("append system note", "convo", convoID, "err", err)
+	}
 }
 
 var idRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)

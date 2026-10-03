@@ -1,5 +1,5 @@
 # StockChat: project rules
-- Read PLAN.md before starting work. Follow milestones in order; tick checkboxes as completed.
+- Read PLAN.md (local-only, git-ignored) before starting work if it exists. Follow milestones in order; tick checkboxes as completed.
 - Backend: Go, chi, SQLite (modernc), slog. Frontend: React 18 + TS strict + Vite + Tailwind.
 - Wrap errors with %w and context. Pass context.Context everywhere. No package-level globals for state.
 - Table-driven tests; run `make test` and `make lint` before finishing a task.

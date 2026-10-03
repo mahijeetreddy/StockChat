@@ -1,6 +1,6 @@
 import { IconChart } from '../icons';
 
-export const SUGGESTIONS = [
+const SUGGESTIONS = [
   "What's Apple trading at?",
   'How has Tesla done this month?',
   'Compare NVDA, AMD, and INTC over 6 months',

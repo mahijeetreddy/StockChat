@@ -26,3 +26,5 @@ jobs:
         with:
           version: latest
           working-directory: backend
+          # Build with the job's Go so it supports the module's go version.
+          install-mode: goinstall
