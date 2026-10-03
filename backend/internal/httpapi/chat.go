@@ -75,9 +75,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	defer s.unlock(convoID)
 
 	sse := newSSEWriter(w)
-	stop := make(chan struct{})
-	defer close(stop)
-	go sse.heartbeat(s.opts.HeartbeatInterval, stop)
+	stopHeartbeat := sse.startHeartbeat(s.opts.HeartbeatInterval)
+	defer stopHeartbeat()
 
 	_ = sse.event(agent.EventConversation, agent.ConversationData{ConversationID: convoID})
 

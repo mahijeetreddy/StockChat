@@ -52,18 +52,29 @@ func (s *sseWriter) comment(text string) error {
 	return s.rc.Flush()
 }
 
-// heartbeat sends ": ping" every interval until stop is closed.
-func (s *sseWriter) heartbeat(interval time.Duration, stop <-chan struct{}) {
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		select {
-		case <-stop:
-			return
-		case <-t.C:
-			if s.comment("ping") != nil {
+// startHeartbeat sends ": ping" every interval in the background. The
+// returned func stops it and waits for the goroutine to exit, so nothing
+// writes to the ResponseWriter after the handler returns.
+func (s *sseWriter) startHeartbeat(interval time.Duration) (stop func()) {
+	done := make(chan struct{})
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
 				return
+			case <-t.C:
+				if s.comment("ping") != nil {
+					return
+				}
 			}
 		}
+	}()
+	return func() {
+		close(done)
+		<-exited
 	}
 }

@@ -14,9 +14,8 @@ func (s *Server) handleNotifications(w http.ResponseWriter, r *http.Request) {
 	defer unsubscribe()
 
 	sse := newSSEWriter(w)
-	stop := make(chan struct{})
-	defer close(stop)
-	go sse.heartbeat(s.opts.HeartbeatInterval, stop)
+	stopHeartbeat := sse.startHeartbeat(s.opts.HeartbeatInterval)
+	defer stopHeartbeat()
 	_ = sse.comment("connected")
 
 	for {
