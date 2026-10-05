@@ -65,14 +65,18 @@ func status(code int, body string) func(w http.ResponseWriter) {
 	}
 }
 
-func newTestClient(t *testing.T, f *fakeAPI) *Client {
+func newTestClient(t *testing.T, f *fakeAPI, fallback ...string) *Client {
 	t.Helper()
 	srv := httptest.NewServer(f.handler(t))
 	t.Cleanup(srv.Close)
-	c, err := New(context.Background(), Config{
+	cfg := Config{
 		APIKey: "k", Model: "gemini-test", MaxRetries: 2, BaseURL: srv.URL,
 		BaseBackoff: time.Millisecond, MaxBackoff: 5 * time.Millisecond,
-	})
+	}
+	if len(fallback) > 0 {
+		cfg.FallbackModel = fallback[0]
+	}
+	c, err := New(context.Background(), cfg)
 	require.NoError(t, err)
 	return c
 }
@@ -293,4 +297,56 @@ func TestMergesConsecutiveSameRole(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	assert.Len(t, got[0].Parts, 2)
+}
+
+func TestFallbackModelAfterOverload(t *testing.T) {
+	overloaded := `{"error":{"code":503,"message":"This model is currently experiencing high demand.","status":"UNAVAILABLE"}}`
+	f := &fakeAPI{scripted: []func(http.ResponseWriter){
+		status(503, overloaded), status(503, overloaded), status(503, overloaded),
+		sse(`{"candidates":[{"content":{"role":"model","parts":[{"text":"from fallback"}]},"finishReason":"STOP"}]}`),
+	}}
+	c := newTestClient(t, f, "gemini-backup")
+	evs := collect(t, c, llm.Request{Messages: []llm.Message{llm.TextMessage(llm.RoleUser, "x")}})
+	require.NoError(t, evs[len(evs)-1].Err)
+	assert.Equal(t, "from fallback", evs[0].TextDelta)
+	require.Len(t, f.paths, 4)
+	assert.Contains(t, f.paths[2], "gemini-test:")
+	assert.Contains(t, f.paths[3], "gemini-backup:", "fallback used after primary retries are exhausted")
+}
+
+func TestNoFallbackOnBadRequest(t *testing.T) {
+	f := &fakeAPI{scripted: []func(http.ResponseWriter){
+		status(400, `{"error":{"code":400,"message":"bad","status":"INVALID_ARGUMENT"}}`),
+	}}
+	c := newTestClient(t, f, "gemini-backup")
+	evs := collect(t, c, llm.Request{Messages: []llm.Message{llm.TextMessage(llm.RoleUser, "x")}})
+	require.Error(t, evs[len(evs)-1].Err)
+	assert.Len(t, f.paths, 1, "non-retryable errors don't switch models")
+}
+
+const dailyQuotaBody = `{"error":{"code":429,"message":"You exceeded your current quota","status":"RESOURCE_EXHAUSTED","details":[` +
+	`{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaMetric":"generativelanguage.googleapis.com/generate_content_free_tier_requests","quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier","quotaValue":"20"}]},` +
+	`{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"79963s"}]}}`
+
+func TestDailyQuotaSkipsStraightToFallback(t *testing.T) {
+	f := &fakeAPI{scripted: []func(http.ResponseWriter){
+		status(429, dailyQuotaBody),
+		sse(`{"candidates":[{"content":{"role":"model","parts":[{"text":"from fallback"}]},"finishReason":"STOP"}]}`),
+	}}
+	c := newTestClient(t, f, "gemini-backup")
+	start := time.Now()
+	evs := collect(t, c, llm.Request{Messages: []llm.Message{llm.TextMessage(llm.RoleUser, "x")}})
+	require.NoError(t, evs[len(evs)-1].Err)
+	assert.Len(t, f.paths, 2, "no pointless retries against an exhausted daily quota")
+	assert.Contains(t, f.paths[1], "gemini-backup:")
+	assert.Less(t, time.Since(start), time.Second)
+}
+
+func TestDailyQuotaWithoutFallbackFailsFast(t *testing.T) {
+	f := &fakeAPI{scripted: []func(http.ResponseWriter){status(429, dailyQuotaBody)}}
+	c := newTestClient(t, f)
+	evs := collect(t, c, llm.Request{Messages: []llm.Message{llm.TextMessage(llm.RoleUser, "x")}})
+	msg, _ := llm.UserMessage(evs[len(evs)-1].Err)
+	assert.Contains(t, msg, "daily free quota")
+	assert.Len(t, f.paths, 1)
 }

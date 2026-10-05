@@ -20,10 +20,14 @@ import (
 
 // Config configures the client.
 type Config struct {
-	APIKey     string
-	Model      string
-	MaxRetries int    // retries on 429/5xx before any output was streamed
-	BaseURL    string // optional override (tests)
+	APIKey string
+	Model  string
+	// FallbackModel (optional) is tried when Model is still rate limited or
+	// overloaded after its retries. Google's docs say history (including
+	// thought signatures) may be resent to a different model as-is.
+	FallbackModel string
+	MaxRetries    int    // retries on 429/5xx before any output was streamed
+	BaseURL       string // optional override (tests)
 	// BaseBackoff is the first retry delay (doubles each attempt, with jitter).
 	BaseBackoff time.Duration
 	MaxBackoff  time.Duration
@@ -43,7 +47,7 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, errors.New("gemini: API key and model are required")
 	}
 	if cfg.BaseBackoff <= 0 {
-		cfg.BaseBackoff = time.Second
+		cfg.BaseBackoff = 2 * time.Second
 	}
 	if cfg.MaxBackoff <= 0 {
 		cfg.MaxBackoff = 30 * time.Second
@@ -130,26 +134,37 @@ func send(ctx context.Context, out chan<- llm.Event, ev llm.Event) bool {
 // run performs the call with retries. Retries happen only if nothing has been
 // emitted yet, so the consumer never sees duplicated output.
 func (c *Client) run(ctx context.Context, contents []*genai.Content, gcfg *genai.GenerateContentConfig, out chan<- llm.Event) {
+	models := []string{c.cfg.Model}
+	if c.cfg.FallbackModel != "" && c.cfg.FallbackModel != c.cfg.Model {
+		models = append(models, c.cfg.FallbackModel)
+	}
 	var lastErr error
-	for attempt := 0; attempt <= c.cfg.MaxRetries; attempt++ {
-		if attempt > 0 {
-			delay := c.backoff(attempt, lastErr)
-			select {
-			case <-time.After(delay):
-			case <-ctx.Done():
-				send(context.Background(), out, llm.Event{Type: llm.EventStop, Err: ctx.Err()})
+models:
+	for _, model := range models {
+		for attempt := 0; attempt <= c.cfg.MaxRetries; attempt++ {
+			if attempt > 0 {
+				delay := c.backoff(attempt, lastErr)
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					send(context.Background(), out, llm.Event{Type: llm.EventStop, Err: ctx.Err()})
+					return
+				}
+			}
+			emitted, err := c.once(ctx, model, contents, gcfg, out)
+			if err == nil {
 				return
 			}
+			lastErr = err
+			if !emitted && ctx.Err() == nil && c.quotaExhausted(err) {
+				continue models // waiting won't help soon; try the fallback model
+			}
+			var le *llm.Error
+			if emitted || ctx.Err() != nil || !errors.As(err, &le) || !le.Retryable {
+				break models // not worth retrying, or output already streamed
+			}
 		}
-		emitted, err := c.once(ctx, contents, gcfg, out)
-		if err == nil {
-			return
-		}
-		lastErr = err
-		var le *llm.Error
-		if emitted || ctx.Err() != nil || !errors.As(err, &le) || !le.Retryable {
-			break
-		}
+		// Retries exhausted on a retryable error: fall through to the next model.
 	}
 	if ctx.Err() != nil {
 		lastErr = ctx.Err()
@@ -160,6 +175,33 @@ func (c *Client) run(ctx context.Context, contents []*genai.Content, gcfg *genai
 	case out <- llm.Event{Type: llm.EventStop, Err: lastErr}:
 	case <-time.After(time.Second):
 	}
+}
+
+// quotaExhausted reports a 429 that won't clear within our retry budget: a
+// daily quota, or a server-suggested delay longer than MaxBackoff.
+func (c *Client) quotaExhausted(err error) bool {
+	var e apiErrWithDelay
+	if !errors.As(err, &e) {
+		return false
+	}
+	return dailyQuota(e.APIError) || retryAfter(err) > c.cfg.MaxBackoff
+}
+
+// dailyQuota reports whether a 429 is for a per-day quota (google.rpc.QuotaFailure).
+func dailyQuota(e genai.APIError) bool {
+	for _, d := range e.Details {
+		if t, _ := d["@type"].(string); !strings.HasSuffix(t, "QuotaFailure") {
+			continue
+		}
+		vs, _ := d["violations"].([]any)
+		for _, v := range vs {
+			m, _ := v.(map[string]any)
+			if id, _ := m["quotaId"].(string); strings.Contains(id, "PerDay") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c *Client) backoff(attempt int, err error) time.Duration {
@@ -173,7 +215,7 @@ func (c *Client) backoff(attempt int, err error) time.Duration {
 }
 
 // once streams one attempt. It returns whether any event was emitted.
-func (c *Client) once(ctx context.Context, contents []*genai.Content, gcfg *genai.GenerateContentConfig, out chan<- llm.Event) (bool, error) {
+func (c *Client) once(ctx context.Context, model string, contents []*genai.Content, gcfg *genai.GenerateContentConfig, out chan<- llm.Event) (bool, error) {
 	var (
 		emitted      bool
 		finish       genai.FinishReason
@@ -182,7 +224,7 @@ func (c *Client) once(ctx context.Context, contents []*genai.Content, gcfg *gena
 		blockReason  string
 		gotAnyOutput bool
 	)
-	for resp, err := range c.sdk.Models.GenerateContentStream(ctx, c.cfg.Model, contents, gcfg) {
+	for resp, err := range c.sdk.Models.GenerateContentStream(ctx, model, contents, gcfg) {
 		if err != nil {
 			return emitted, classify(err)
 		}
@@ -291,6 +333,8 @@ func classify(err error) error {
 	var apiErr genai.APIError
 	if errors.As(err, &apiErr) {
 		switch {
+		case apiErr.Code == http.StatusTooManyRequests && dailyQuota(apiErr):
+			return &llm.Error{Kind: llm.KindRateLimited, UserMsg: "The AI model's daily free quota is used up. Try again tomorrow, or set LLM_FALLBACK_MODEL / use a paid API key.", Retryable: true, Err: apiErrWithDelay{apiErr}}
 		case apiErr.Code == http.StatusTooManyRequests:
 			return &llm.Error{Kind: llm.KindRateLimited, UserMsg: "The AI model is rate limited right now. Please wait a moment and try again.", Retryable: true, Err: apiErrWithDelay{apiErr}}
 		case apiErr.Code == http.StatusRequestTimeout || apiErr.Code >= 500:

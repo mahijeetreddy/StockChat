@@ -16,8 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joho/godotenv"
-
 	"github.com/mahijeetreddy/stockchat/backend/internal/agent"
 	"github.com/mahijeetreddy/stockchat/backend/internal/app"
 	"github.com/mahijeetreddy/stockchat/backend/internal/config"
@@ -31,7 +29,9 @@ func main() {
 }
 
 func run() error {
-	_ = godotenv.Load(".env", "../.env")
+	if err := config.LoadDotEnv(".env", "../.env"); err != nil {
+		return err
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		return err

@@ -13,8 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/joho/godotenv"
-
 	"github.com/mahijeetreddy/stockchat/backend/internal/app"
 	"github.com/mahijeetreddy/stockchat/backend/internal/config"
 )
@@ -32,7 +30,9 @@ func main() {
 
 func run() error {
 	// .env is optional; real env vars win over the file.
-	_ = godotenv.Load(".env", "../.env")
+	if err := config.LoadDotEnv(".env", "../.env"); err != nil {
+		return err
+	}
 
 	cfg, err := config.Load()
 	if err != nil {

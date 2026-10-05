@@ -23,6 +23,7 @@ type Config struct {
 	LLMProvider        string `env:"LLM_PROVIDER" envDefault:"gemini"`
 	GeminiAPIKey       string `env:"GEMINI_API_KEY"`
 	LLMModel           string `env:"LLM_MODEL"`
+	LLMFallbackModel   string `env:"LLM_FALLBACK_MODEL"`
 	LLMMaxRetries      int    `env:"LLM_MAX_RETRIES" envDefault:"3"`
 	LLMMaxTokens       int    `env:"LLM_MAX_TOKENS" envDefault:"1024"`
 	AgentMaxIterations int    `env:"AGENT_MAX_ITERATIONS" envDefault:"6"`

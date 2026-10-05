@@ -11,8 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joho/godotenv"
-
+	"github.com/mahijeetreddy/stockchat/backend/internal/config"
 	"github.com/mahijeetreddy/stockchat/backend/internal/llm/gemini"
 )
 
@@ -23,7 +22,7 @@ import (
 //	EVAL_ONLY=advice_buy,compare_three make eval   # subset
 //	EVAL_DELAY=6s make eval                        # slower, for strict free-tier RPM
 func TestLiveEvals(t *testing.T) {
-	_ = godotenv.Load("../.env", "../../.env")
+	_ = config.LoadDotEnv("../.env", "../../.env")
 	key, model := os.Getenv("GEMINI_API_KEY"), os.Getenv("LLM_MODEL")
 	if key == "" || model == "" {
 		t.Skip("GEMINI_API_KEY and LLM_MODEL are required for live evals")
@@ -55,7 +54,10 @@ func TestLiveEvals(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	client, err := gemini.New(ctx, gemini.Config{APIKey: key, Model: model, MaxRetries: retries, MaxBackoff: 60 * time.Second})
+	client, err := gemini.New(ctx, gemini.Config{
+		APIKey: key, Model: model, FallbackModel: os.Getenv("LLM_FALLBACK_MODEL"),
+		MaxRetries: retries, MaxBackoff: 60 * time.Second,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +78,10 @@ func TestLiveEvals(t *testing.T) {
 		if !r.Passed() {
 			status = "FAIL"
 		}
-		fmt.Printf("[%2d/%d] %-28s %s\n", i+1, len(cases), c.ID, status)
+		fmt.Printf("[%2d/%d] %-28s %s (%s)\n", i+1, len(cases), c.ID, status, r.Duration.Round(time.Second))
+		if !r.Passed() {
+			fmt.Printf("        why: %s\n", strings.Join(r.Fails, "; "))
+		}
 	}
 	passed := Report(os.Stdout, results)
 	if passed < len(results) {

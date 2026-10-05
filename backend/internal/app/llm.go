@@ -14,7 +14,12 @@ import (
 func NewLLM(ctx context.Context, cfg config.Config) (llm.Client, error) {
 	switch cfg.LLMProvider {
 	case "gemini":
-		return gemini.New(ctx, gemini.Config{APIKey: cfg.GeminiAPIKey, Model: cfg.LLMModel, MaxRetries: cfg.LLMMaxRetries})
+		return gemini.New(ctx, gemini.Config{
+			APIKey:        cfg.GeminiAPIKey,
+			Model:         cfg.LLMModel,
+			FallbackModel: cfg.LLMFallbackModel,
+			MaxRetries:    cfg.LLMMaxRetries,
+		})
 	case "fake":
 		return fake.NewDemo(), nil
 	default:

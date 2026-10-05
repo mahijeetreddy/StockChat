@@ -17,8 +17,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joho/godotenv"
-
 	"github.com/mahijeetreddy/stockchat/backend/internal/app"
 	"github.com/mahijeetreddy/stockchat/backend/internal/config"
 	"github.com/mahijeetreddy/stockchat/backend/internal/domain"
@@ -32,7 +30,9 @@ func main() {
 }
 
 func run(args []string) error {
-	_ = godotenv.Load(".env", "../.env")
+	if err := config.LoadDotEnv(".env", "../.env"); err != nil {
+		return err
+	}
 	// The CLI never needs an LLM; don't require Gemini settings.
 	_ = os.Setenv("LLM_PROVIDER", "fake")
 	cfg, err := config.Load()
